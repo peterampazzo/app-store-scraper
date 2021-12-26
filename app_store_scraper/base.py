@@ -7,6 +7,8 @@ import time
 from datetime import datetime
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+import ast
+from .utils import store
 
 logger = logging.getLogger("Base")
 
@@ -50,6 +52,7 @@ class Base:
         self.url = self._landing_url()
 
         self.details = list()
+        self.similar = list()
 
         self.reviews = list()
         self.reviews_count = int()
@@ -184,6 +187,14 @@ class Base:
         )
         response = self._response.json()
         self.details.extend(response["results"])
+
+    def get_similar(self):
+        self._heartbeat()
+        url = f"https://itunes.apple.com/{self.country}/app/app/id{self.app_id}"
+        self._get(url, headers={"X-Apple-Store-Front": f"{store[self.country.upper()]},32" })
+        response = re.search('customersAlsoBoughtApps":(.*?\])', self._response.text).group(1)
+        response = ast.literal_eval(response)
+        self.similar.extend(response)
 
     def review(self, how_many=sys.maxsize, after=None, sleep=None):
         self._log_timer = 0
