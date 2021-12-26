@@ -49,6 +49,8 @@ class Base:
 
         self.url = self._landing_url()
 
+        self.details = list()
+
         self.reviews = list()
         self.reviews_count = int()
 
@@ -174,6 +176,14 @@ class Base:
         pattern = fr"{self._base_landing_url}/[a-z]{{2}}/.+?/id([0-9]+)"
         app_id = re.search(pattern, self._response.text).group(1)
         return app_id
+
+    def get_details(self):
+        self._heartbeat()
+        self._get(
+            f"https://itunes.apple.com/lookup?id={self.app_id}&country={self.country}&entity=software" #&lang={lang}
+        )
+        response = self._response.json()
+        self.details.extend(response["results"])
 
     def review(self, how_many=sys.maxsize, after=None, sleep=None):
         self._log_timer = 0
