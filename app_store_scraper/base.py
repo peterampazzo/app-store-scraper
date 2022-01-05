@@ -12,6 +12,8 @@ from .utils import store
 
 logger = logging.getLogger("Base")
 
+class APICapacityExceededError(Exception):
+    pass
 
 class Base:
     _scheme = "https"
@@ -115,8 +117,8 @@ class Base:
         url,
         headers=None,
         params=None,
-        total=3,
-        backoff_factor=10,
+        total=5,
+        backoff_factor=0.5,
         status_forcelist=[404, 429],
     ) -> requests.Response:
         retries = Retry(
@@ -127,7 +129,7 @@ class Base:
         with requests.Session() as s:
             s.mount(self._base_request_url, HTTPAdapter(max_retries=retries))
             logger.debug(f"Making a GET request: {url}")
-            self._response = s.get(url, headers=headers, params=params)
+            self._response = s.get(url, headers=headers, params=params, timeout=30)
 
     def _token(self):
         self._get(self.url)
@@ -137,17 +139,32 @@ class Base:
                 token = re.search(r"token%22%3A%22(.+?)%22", tag).group(1)
                 return f"bearer {token}"
 
-    def _parse_data(self, after):
+    def _parse_data(self, after, retry_after):
         response = self._response.json()
-        for data in response["data"]:
-            review = data["attributes"]
-            review["date"] = datetime.strptime(review["date"], "%Y-%m-%dT%H:%M:%SZ")
-            if after and review["date"] < after:
-                continue
-            self.reviews.append(review)
-            self.reviews_count += 1
-            self._fetched_count += 1
-            logger.debug(f"Fetched {self.reviews_count} review(s)")
+        try:
+            for data in response["data"]:
+                review = data["attributes"]
+                review["date"] = datetime.strptime(review["date"], "%Y-%m-%dT%H:%M:%SZ")
+                if after and review["date"] < after:
+                    continue
+                self.reviews.append(review)
+                self.reviews_count += 1
+                self._fetched_count += 1
+                logger.debug(f"Fetched {self.reviews_count} review(s)")
+        except KeyError:
+            if response["message"] == "API capacity exceeded":
+                if retry_after != None:
+                    logger.info(f"{response['message']}: retrying in {retry_after} seconds")
+                    time.sleep(retry_after)
+                    self._heartbeat()
+                    self._get(
+                        self._request_url,
+                        headers=self._request_headers,
+                        params=self._request_params,
+                    )
+                    self._parse_data(after, retry_after)
+                else:
+                    raise APICapacityExceededError()
 
     def _parse_next(self):
         response = self._response.json()
@@ -196,7 +213,7 @@ class Base:
         response = ast.literal_eval(response)
         self.similar.extend(response)
 
-    def review(self, how_many=sys.maxsize, after=None, sleep=None):
+    def review(self, how_many=sys.maxsize, after=None, sleep=None, retry_after=None):
         self._log_timer = 0
         if after and not isinstance(after, datetime):
             raise SystemExit("`after` must be a datetime object.")
@@ -209,7 +226,7 @@ class Base:
                     headers=self._request_headers,
                     params=self._request_params,
                 )
-                self._parse_data(after)
+                self._parse_data(after, retry_after)
                 self._parse_next()
                 if self._request_offset is None or self._fetched_count >= how_many:
                     break
@@ -217,6 +234,8 @@ class Base:
                     time.sleep(sleep)
         except KeyboardInterrupt:
             logger.error("Keyboard interrupted")
+        except APICapacityExceededError:
+            logger.error("API capacity has been exceeded")
         except Exception as e:
             logger.error(f"Something went wrong: {e}")
         finally:
