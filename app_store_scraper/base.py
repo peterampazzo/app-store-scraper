@@ -129,7 +129,7 @@ class Base:
         with requests.Session() as s:
             s.mount(self._base_request_url, HTTPAdapter(max_retries=retries))
             logger.debug(f"Making a GET request: {url}")
-            self._response = s.get(url, headers=headers, params=params, timeout=30)
+            self._response = s.get(url, headers=headers, params=params, timeout=200)
 
     def _token(self):
         self._get(self.url)
